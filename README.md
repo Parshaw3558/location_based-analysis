@@ -1,20 +1,4 @@
 
-You said:
-app.py
-Python
-Dataset.csv
-Spreadsheet
-model.py
-Python
-reqire.txt
-Document
-city_stats.csv
-Spreadsheet
-restaurants_sample.csv
-Spreadsheet
-take the file and give me the readme documnt for the git hub repo
-ChatGPT said:
-Here is a complete, professional README.md for your GitHub repository, based fully on your uploaded files (app.py, model.py, Dataset.csv, reqire.txt, sample CSVs).
 
 📍 Location-Based Restaurant Analysis
 Interactive Streamlit Dashboard + Data Processing Pipeline
