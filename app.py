@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import os
@@ -10,24 +11,24 @@ SAMPLE_PATH = os.path.join(OUTPUT_DIR, "restaurants_sample.csv")
 CITY_STATS_PATH = os.path.join(OUTPUT_DIR, "city_stats.csv")
 FOLIUM_PATH = os.path.join(OUTPUT_DIR, "folium_map.html")
 
-st.title(" Location-Analysizer — Restaurants")
+st.title("📍 Location-Analyzer — Restaurants")
 
-# ----------------------------------------------------------
+# ---------------------------
 # Load dataset
-# ----------------------------------------------------------
+# ---------------------------
 if not os.path.exists(SAMPLE_PATH):
-    st.error("Run model.py (analysis.py) first to generate outputs in the outputs/ folder.")
+    st.error("Run model.py first to generate outputs in the outputs/ folder.")
     st.stop()
 
 df = pd.read_csv(SAMPLE_PATH)
 
-# ----------------------------------------------------------
-# Sidebar Filters
-# ----------------------------------------------------------
+# ---------------------------
+# Sidebar filters
+# ---------------------------
 st.sidebar.header("Filters")
 
-city_col = 'City' if 'City' in df.columns else None
-cuisine_col = 'Cuisines' if 'Cuisines' in df.columns else None
+city_col = "City" if "City" in df.columns else None
+cuisine_col = "Cuisines" if "Cuisines" in df.columns else None
 
 # City filter
 if city_col:
@@ -36,108 +37,122 @@ if city_col:
 else:
     selected_city = "All"
 
-# Cuisine filter
+# Cuisine filter: build a cleaned list from comma-separated cuisine values
 if cuisine_col:
-    cuisines = sorted(df[cuisine_col].dropna().unique().tolist())
-    selected_cuisine = st.sidebar.selectbox("Cuisine", ["All"] + cuisines)
+    cuisine_list = sorted(
+        set(
+            c.strip()
+            for row in df[cuisine_col].dropna().astype(str)
+            for c in row.split(",")
+            if c.strip()
+        )
+    )
+    selected_cuisine = st.sidebar.selectbox("Cuisine", ["All"] + cuisine_list)
 else:
     selected_cuisine = "All"
 
-# ----------------------------------------------------------
-# Apply Filters
-# ----------------------------------------------------------
+# ---------------------------
+# Apply filters safely
+# ---------------------------
 df_filtered = df.copy()
 
 if selected_city != "All" and city_col:
     df_filtered = df_filtered[df_filtered[city_col] == selected_city]
 
 if selected_cuisine != "All" and cuisine_col:
-    df_filtered = df_filtered[df_filtered[cuisine_col] == selected_cuisine]
+    # match partial cuisine words within the original Cuisines column
+    df_filtered = df_filtered[
+        df_filtered[cuisine_col].astype(str).str.contains(rf'\b{pd.Series([selected_cuisine])[0]}\b', case=False, na=False)
+    ]
 
 st.write(f"Showing **{len(df_filtered)} restaurants** after filtering.")
 
-# ----------------------------------------------------------
-# Map Visualization
-# ----------------------------------------------------------
-if 'Latitude' in df_filtered.columns and 'Longitude' in df_filtered.columns:
-    st.subheader(" Map View")
-
+# ---------------------------
+# Map visualization
+# ---------------------------
+if "Latitude" in df_filtered.columns and "Longitude" in df_filtered.columns and df_filtered[["Latitude", "Longitude"]].dropna().shape[0] > 0:
+    st.subheader("🗺 Map View")
     try:
         st.map(
-            df_filtered[['Latitude', 'Longitude']].rename(
-                columns={'Latitude': 'lat', 'Longitude': 'lon'}
-            ),
+            df_filtered[["Latitude", "Longitude"]].rename(columns={"Latitude": "lat", "Longitude": "lon"}),
             zoom=11
         )
-    except:
+    except Exception:
         if os.path.exists(FOLIUM_PATH):
             import streamlit.components.v1 as components
             st.write("Interactive map (folium):")
-            with open(FOLIUM_PATH, 'r', encoding='utf-8') as f:
+            with open(FOLIUM_PATH, "r", encoding="utf-8") as f:
                 html = f.read()
             components.html(html, height=600)
         else:
             st.info("No interactive map available.")
 else:
-    st.info("Dataset missing 'Latitude' or 'Longitude' columns.")
+    st.info("Dataset missing Latitude/Longitude (or no points after filtering).")
 
-# ----------------------------------------------------------
-# Data Table
-# ----------------------------------------------------------
-with st.expander(" Show Data Table"):
+# ---------------------------
+# Data table
+# ---------------------------
+with st.expander("📄 Show Data Table"):
     st.dataframe(df_filtered.reset_index(drop=True), height=300)
 
-# ----------------------------------------------------------
-# Insights Section
-# ----------------------------------------------------------
-st.subheader(" Aggregations & Insights")
+# ---------------------------
+# Aggregations & Insights
+# ---------------------------
+st.subheader("📊 Aggregations & Insights")
 
-# City-level stats
+# City stats
 if os.path.exists(CITY_STATS_PATH):
     city_stats = pd.read_csv(CITY_STATS_PATH)
     st.write("### City-wise Summary")
-    st.dataframe(city_stats.sort_values("restaurants_count", ascending=False).head(10))
+    st.dataframe(city_stats.sort_values("restaurants_count", ascending=False).head(15))
 else:
     st.info("City summary not found. Run model.py first.")
 
-# ----------------------------------------------------------
-# Top Localities - ERROR FREE VERSION
-# ----------------------------------------------------------
+# Top localities (overall) - use original df (not filtered) to show overall hotspots
 if "Locality" in df.columns:
-    st.subheader(" Top Localities (Overall)")
+    st.subheader("🏙 Top Localities (Overall)")
     top_loc = df["Locality"].value_counts().head(10).reset_index()
-    top_loc.columns = ["Locality", "count"]
-    st.bar_chart(top_loc.set_index("Locality")["count"])
+    top_loc.columns = ["Locality", "Count"]
+    st.altair_chart(
+        alt.Chart(top_loc)
+        .mark_bar()
+        .encode(x=alt.X("Locality:N", sort="-y", axis=alt.Axis(labelAngle=-45)), y="Count:Q")
+        .properties(height=300),
+        use_container_width=True
+    )
 else:
-    st.error("Locality column missing from dataset.")
+    st.info("Locality column not found in dataset.")
 
-# ----------------------------------------------------------
-# Rating distribution
-# ----------------------------------------------------------
-rating_col = None
-for col in ["Aggregate rating", "Rating", "Rating text"]:
-    if col in df_filtered.columns:
-        rating_col = col
-        break
+# ---------------------------
+# Rating distribution (uses parsed numeric rating if available)
+# ---------------------------
+# Try to find a numeric rating column first
+if "rating_num" in df_filtered.columns:
+    rating_col = "rating_num"
+else:
+    # fallback: try to find common rating-like columns
+    candidates = [c for c in df_filtered.columns if c.lower() in ("aggregate rating", "rating", "rating text")]
+    rating_col = candidates[0] if candidates else None
 
 if rating_col:
-    st.subheader(" Rating Distribution")
-
-    df_filtered["rating_num"] = pd.to_numeric(df_filtered[rating_col], errors="coerce")
-
-    chart = (
-        alt.Chart(df_filtered.dropna(subset=["rating_num"]))
-        .mark_bar()
-        .encode(
-            alt.X("rating_num:Q", bin=alt.Bin(maxbins=20)),
-            y="count()"
+    st.subheader("⭐ Rating Distribution")
+    df_filtered["rating_for_plot"] = pd.to_numeric(df_filtered[rating_col], errors="coerce")
+    plot_df = df_filtered.dropna(subset=["rating_for_plot"])
+    if plot_df.empty:
+        st.info("No numeric rating values available after filtering.")
+    else:
+        chart = (
+            alt.Chart(plot_df)
+            .mark_bar()
+            .encode(
+                alt.X("rating_for_plot:Q", bin=alt.Bin(maxbins=20), title="rating_num (binned)"),
+                y="count()"
+            )
+            .properties(height=300)
         )
-        .properties(height=250)
-    )
-    st.altair_chart(chart, use_container_width=True)
+        st.altair_chart(chart, use_container_width=True)
 else:
-    st.info("Rating column not found.")
+    st.info("Rating column not found or not parsable.")
 
-# ----------------------------------------------------------
 st.markdown("---")
 st.write("Run `python model.py` to regenerate outputs if dataset changes.")
